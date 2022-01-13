@@ -2,6 +2,7 @@ import { Signal } from './signal';
 import { LocalStream, makeRemote, RemoteStream } from './stream';
 
 const API_CHANNEL = 'ion-sfu';
+const API_CHAT = 'chat_channel';
 const ERR_NO_SESSION = 'no active session, join first';
 
 export interface Sender {
@@ -29,6 +30,7 @@ type Transports<T extends string | symbol | number, U> = {
 
 export class Transport {
   api?: RTCDataChannel;
+  chatAPI?: RTCDataChannel;
   signal: Signal;
   pc: RTCPeerConnection;
   candidates: RTCIceCandidateInit[];
@@ -40,6 +42,7 @@ export class Transport {
 
     if (role === Role.pub) {
       this.pc.createDataChannel(API_CHANNEL);
+      this.chatAPI = this.pc.createDataChannel(API_CHAT)
     }
 
     this.pc.onicecandidate = ({ candidate }) => {
@@ -61,6 +64,7 @@ export class Transport {
 
 export default class Client {
   transports?: Transports<Role, Transport>;
+
   private config: Configuration;
   private signal: Signal;
 
@@ -87,11 +91,11 @@ export default class Client {
   }
 
   async join(sid: string, uid: string) {
+
     this.transports = {
       [Role.pub]: new Transport(Role.pub, this.signal, this.config),
       [Role.sub]: new Transport(Role.sub, this.signal, this.config),
     };
-
     this.transports[Role.sub].pc.ontrack = (ev: RTCTrackEvent) => {
       const stream = ev.streams[0];
       const remote = makeRemote(stream, this.transports![Role.sub]);
@@ -102,6 +106,7 @@ export default class Client {
     };
 
     this.transports[Role.sub].pc.ondatachannel = (ev: RTCDataChannelEvent) => {
+      console.log(ev.channel.label);
       if (ev.channel.label === API_CHANNEL) {
         this.transports![Role.sub].api = ev.channel;
         ev.channel.onmessage = (e) => {
@@ -111,7 +116,6 @@ export default class Client {
         };
         return;
       }
-
       if (this.ondatachannel) {
         this.ondatachannel(ev);
       }
@@ -125,7 +129,13 @@ export default class Client {
     this.transports[Role.pub].candidates.forEach((c) => this.transports![Role.pub].pc.addIceCandidate(c));
     this.transports[Role.pub].pc.onnegotiationneeded = this.onNegotiationNeeded.bind(this);
   }
-
+  chatMessage(data: any) {
+    if (this.transports) {
+      if (this.transports[Role.pub]?.chatAPI?.readyState === "open") {
+        this.transports[Role.pub]?.chatAPI?.send(JSON.stringify(data));
+      }
+    }
+  }
   leave() {
     if (this.transports) {
       Object.values(this.transports).forEach((t) => t.pc.close());

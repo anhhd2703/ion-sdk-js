@@ -55,7 +55,7 @@ class IonSFUGRPCWebSignal implements Signal {
 
     // this.streaming.on('end' || 'status', (status?: Status | undefined) => {});
   }
-
+  chatMessage(data: any) { }
   join(sid: string, uid: string, offer: RTCSessionDescriptionInit) {
     const request = new SignalRequest();
     const join = new JoinRequest();

@@ -1,10 +1,12 @@
 import { Trickle } from '../client';
-export { Trickle };
+import { IonSFUJSONRPCSignal } from './json-rpc-impl';
+
+export { Trickle, IonSFUJSONRPCSignal };
 
 export interface Signal {
   onnegotiate?: (jsep: RTCSessionDescriptionInit) => void;
   ontrickle?: (trickle: Trickle) => void;
-
+  chatMessage: (data: any) => void;
   join(sid: string, uid: null | string, offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit>;
   offer(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit>;
   answer(answer: RTCSessionDescriptionInit): void;
