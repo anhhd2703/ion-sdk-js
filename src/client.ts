@@ -1,8 +1,7 @@
 import { Signal } from './signal';
 import { LocalStream, makeRemote, RemoteStream } from './stream';
-
 const API_CHANNEL = 'ion-sfu';
-const API_CHAT = 'chat_channel';
+const API_CHAT = 'chat_channel'
 const ERR_NO_SESSION = 'no active session, join first';
 
 export interface Sender {
@@ -30,13 +29,13 @@ type Transports<T extends string | symbol | number, U> = {
 
 export class Transport {
   api?: RTCDataChannel;
-  chatAPI?: RTCDataChannel;
   signal: Signal;
   pc: RTCPeerConnection;
   candidates: RTCIceCandidateInit[];
-
+  chatAPI?: RTCDataChannel;
   constructor(role: Role, signal: Signal, config: RTCConfiguration) {
     this.signal = signal;
+
     this.pc = new RTCPeerConnection(config);
     this.candidates = [];
 
@@ -64,11 +63,11 @@ export class Transport {
 
 export default class Client {
   transports?: Transports<Role, Transport>;
-
   private config: Configuration;
   private signal: Signal;
-
+  sid?: string;
   ontrack?: (track: MediaStreamTrack, stream: RemoteStream) => void;
+  removeTrack?: (track: MediaStreamTrack) => void;
   ondatachannel?: (ev: RTCDataChannelEvent) => void;
   onspeaker?: (ev: string[]) => void;
 
@@ -78,35 +77,40 @@ export default class Client {
       codec: 'vp8',
       iceServers: [
         {
-          urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'],
+          urls: ['stun:stun.l.google.com:19302'],
         },
       ],
     },
   ) {
     this.signal = signal;
     this.config = config;
-
     signal.onnegotiate = this.negotiate.bind(this);
     signal.ontrickle = this.trickle.bind(this);
   }
 
   async join(sid: string, uid: string) {
-
     this.transports = {
       [Role.pub]: new Transport(Role.pub, this.signal, this.config),
       [Role.sub]: new Transport(Role.sub, this.signal, this.config),
     };
+    this.sid = sid
     this.transports[Role.sub].pc.ontrack = (ev: RTCTrackEvent) => {
       const stream = ev.streams[0];
+      stream.onremovetrack = ({ track }) => {
+        if (this.removeTrack) {
+          this.removeTrack(track)
+        }
+        if (!stream.getTracks().length) {
+          console.log(`stream ${stream.id} emptied (effectively removed).`);
+        }
+      };
       const remote = makeRemote(stream, this.transports![Role.sub]);
-
       if (this.ontrack) {
         this.ontrack(ev.track, remote);
       }
     };
 
     this.transports[Role.sub].pc.ondatachannel = (ev: RTCDataChannelEvent) => {
-      console.log(ev.channel.label);
       if (ev.channel.label === API_CHANNEL) {
         this.transports![Role.sub].api = ev.channel;
         ev.channel.onmessage = (e) => {
@@ -119,12 +123,12 @@ export default class Client {
       if (this.ondatachannel) {
         this.ondatachannel(ev);
       }
-    };
+    }
+
 
     const offer = await this.transports[Role.pub].pc.createOffer();
     await this.transports[Role.pub].pc.setLocalDescription(offer);
     const answer = await this.signal.join(sid, uid, offer);
-
     await this.transports[Role.pub].pc.setRemoteDescription(answer);
     this.transports[Role.pub].candidates.forEach((c) => this.transports![Role.pub].pc.addIceCandidate(c));
     this.transports[Role.pub].pc.onnegotiationneeded = this.onNegotiationNeeded.bind(this);
@@ -142,19 +146,47 @@ export default class Client {
       delete this.transports;
     }
   }
-
   getPubStats(selector?: MediaStreamTrack) {
     if (!this.transports) {
       throw Error(ERR_NO_SESSION);
     }
-    return this.transports[Role.pub].pc.getStats(selector);
+    return this.transports[Role.pub].pc.getStats(selector)
+      .then(stats => {
+        let video: any = []
+        let audio: any = []
+        stats.forEach(report => {
+          if (report.type === "outbound-rtp" && report.kind === "video") {
+            video.push(report)
+          }
+          if (report.type === "outbound-rtp" && report.kind === "audio") {
+            audio.push(report)
+          }
+        }
+        )
+        return { video, audio }
+      });
   }
 
   getSubStats(selector?: MediaStreamTrack) {
     if (!this.transports) {
       throw Error(ERR_NO_SESSION);
     }
-    return this.transports[Role.sub].pc.getStats(selector);
+    return this.transports[Role.sub].pc.getStats(selector)
+      .then(stats => {
+        let video: any = []
+        let audio: any = []
+        stats.forEach(report => {
+          if (report.type === "inbound-rtp" && report.kind === "video") {
+            video.push(report)
+          }
+          if (report.type === "inbound-rtp" && report.kind === "audio") {
+            audio.push(report)
+          }
+
+        }
+        )
+        return { video, audio }
+      })
   }
 
   publish(stream: LocalStream) {
@@ -170,6 +202,9 @@ export default class Client {
     }
     return this.transports[Role.pub].pc.createDataChannel(label);
   }
+
+
+
 
   close() {
     if (this.transports) {
